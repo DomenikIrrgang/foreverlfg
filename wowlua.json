@@ -6,12 +6,19 @@
     "kind": "library",
     "description": "Groups and players looking for groups on WoW Forever, from the game's group finder and the public chat channels, as one list.",
     "license": "MIT",
-    "wowlua": "^0.12"
+    "repository": "https://github.com/DomenikIrrgang/foreverlfg",
+    "keywords": ["lfg", "group-finder", "chat", "forever"],
+    "wowlua": "^0.13"
   },
   "flavors": {
     "camelot": {}
   },
   "check": {
     "mode": "strict"
+  },
+  "profiles": {
+    "test": {
+      "runtime-checks": "exports"
+    }
   }
 }
