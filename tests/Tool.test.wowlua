@@ -1,0 +1,39 @@
+-- ForeverLFG's tool source: the game's group finder results read into the
+-- store, also when the game hands fields over as secrets.
+
+import test, expect from "wowlua:test"
+import * as mock from "wowlua:mock"
+import lfg from "/init"
+import entry from "/Store"
+
+@test(
+	"a search result partly secret: read, the secret fields left out (found in game: ipairs refused a secret activityIDs)"
+)
+local function secretResult()
+	mock.fake("C_LFGList.GetSearchResults", function(): (number, { number })
+		return 1, { 7 }
+	end)
+	mock.fake("C_LFGList.GetSearchResultInfo", function(_: number): unknown
+		return {
+			searchResultID = 7,
+			activityIDs = mock.secret({ 1 }),
+			numMembers = mock.secret(3),
+			comment = mock.secret("LF tank"),
+			age = mock.secret(30),
+			isDelisted = mock.secret(false),
+			leaderName = "Tester",
+		}
+	end)
+	mock.fake("C_LFGList.GetSearchResultMemberCounts", function(_: number): unknown
+		return nil
+	end)
+	mock.fake("C_LFGList.GetSearchResultLeaderInfo", function(_: number): unknown
+		return { name = mock.secret("Tester"), lfgRoles = mock.secret({ tank = true }) }
+	end)
+	lfg.Start()
+	mock.fireEvent("LFG_LIST_SEARCH_RESULTS_RECEIVED")
+	mock.fireEvent("LFG_LIST_SEARCH_RESULT_UPDATED", 7)
+	local e = assert(entry("Tester"))
+	expect(e.key).toBe("Tester")
+	lfg.Stop()
+end

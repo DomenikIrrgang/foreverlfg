@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (2026-11-07)
+
+### Fixed
+
+- Group finder results the game hands over partly secret no longer stop the list with `bad argument #1 to 'ipairs' (table expected, got secret)`: a secret field (the activities, the member count, the comment, the leader's name, roles) is read as missing, and the rest of the result still shows.
+
 ## 0.1.0 (2026-10-27)
 
 The first version on the wowlua registry, moved out of SuuUI, where it was the Group Finder's library.

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/DomenikIrrgang/wowlua/main/schema/wowlua-0.1.json",
   "package": {
     "name": "foreverlfg",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "kind": "library",
     "description": "Groups and players looking for groups on WoW Forever, from the game's group finder and the public chat channels, as one list.",
     "license": "MIT",
