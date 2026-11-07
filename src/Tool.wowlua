@@ -94,7 +94,26 @@ local function tableOK<T>(t: T?): t is T
 	return type(t) == "table" and not isSecret(t)
 end
 
--- One result as the store's tool source.
+-- A listing's activities (one on older clients). The game may hand the list
+-- or an ID over as a secret (found in game: ipairs refused a secret
+-- activityIDs): a secret one is left out.
+local function activityIDs(info: unknown): number[]
+	local out: number[] = {}
+	local list: unknown = tbl.field(info, "activityIDs")
+	if not tableOK(list) then
+		list = { tbl.field(info, "activityID") }
+	end
+	for _, a in ipairs(list :: { unknown }) do
+		local n = secret.asNumber(a)
+		if n then
+			out[#out + 1] = n
+		end
+	end
+	return out
+end
+
+-- One result as the store's tool source (a field the game keeps secret is
+-- read as missing).
 local function readResult(id: number, category: number?): (string?, ToolSource?)
 	local L = lfg()
 	local ok, info = pcall(L.GetSearchResultInfo, id)
@@ -102,21 +121,21 @@ local function readResult(id: number, category: number?): (string?, ToolSource?)
 		return nil
 	end
 	local acts: string[] = {}
-	-- (one activity on older clients)
-	for _, a in ipairs(info.activityIDs or { tbl.field(info, "activityID") }) do
+	for _, a in ipairs(activityIDs(info)) do
 		acts[#acts + 1] = catalogue.ForTool(a) or ("tool:" .. a)
 	end
+	local members = secret.asNumber(tbl.field(info, "numMembers"))
 	local data = {
 		resultID = id,
 		category = category,
 		activities = acts,
-		intent = (info.numMembers or 0) <= 1 and "player" or "group",
-		comment = info.comment,
-		age = info.age,
-		delisted = info.isDelisted,
-		newPlayerFriendly = info.newPlayerFriendly,
-		playstyle = info.generalPlaystyle,
-		self = info.hasSelf,
+		intent = (members or 0) <= 1 and "player" or "group",
+		comment = secret.asString(tbl.field(info, "comment")),
+		age = secret.asNumber(tbl.field(info, "age")),
+		delisted = secret.flag(tbl.field(info, "isDelisted")),
+		newPlayerFriendly = secret.flag(tbl.field(info, "newPlayerFriendly")),
+		playstyle = secret.asNumber(tbl.field(info, "generalPlaystyle")),
+		self = secret.flag(tbl.field(info, "hasSelf")),
 		needed = {},
 		offered = {},
 		seenAt = now(),
@@ -160,17 +179,21 @@ local function readResult(id: number, category: number?): (string?, ToolSource?)
 	end
 	local okL, leader = pcall(L.GetSearchResultLeaderInfo, id)
 	if okL and tableOK(leader) then
-		data.leader = { name = leader.name, class = leader.classFilename, level = leader.level }
+		data.leader = {
+			name = secret.asString(tbl.field(leader, "name")),
+			class = secret.asString(tbl.field(leader, "classFilename")),
+			level = secret.asNumber(tbl.field(leader, "level")),
+		}
 		local roles = leader.lfgRoles
 		if data.intent == "player" and tableOK(roles) then
 			local offered: { [string]: boolean } = {}
-			if roles.tank then
+			if secret.flag(tbl.field(roles, "tank")) then
 				offered.tank = true
 			end
-			if roles.healer then
+			if secret.flag(tbl.field(roles, "healer")) then
 				offered.healer = true
 			end
-			if roles.dps then
+			if secret.flag(tbl.field(roles, "dps")) then
 				offered.damage = true
 			end
 			data.offered = offered
@@ -178,8 +201,8 @@ local function readResult(id: number, category: number?): (string?, ToolSource?)
 	end
 	local first = catalogue.Get(acts[1] or "")
 	local size = first and first.size
-	data.members = { info.numMembers or 1, size or 5 }
-	local name = (data.leader and data.leader.name) or info.leaderName
+	data.members = { members or 1, size or 5 }
+	local name = (data.leader and data.leader.name) or tbl.field(info, "leaderName")
 	return (type(name) == "string" and not isSecret(name)) and name or ("tool:" .. id), data
 end
 
@@ -214,7 +237,7 @@ local function received()
 	if not category then
 		for _, id in ipairs(ids) do
 			local okI, info = pcall(L.GetSearchResultInfo, id)
-			local first = okI and tableOK(info) and info.activityIDs and info.activityIDs[1]
+			local first = okI and tableOK(info) and activityIDs(info)[1]
 			local a = first and catalogue.Get(catalogue.ForTool(first) or ("tool:" .. first))
 			if a and a.category then
 				category = a.category
@@ -300,13 +323,13 @@ export function listing(): Listing?
 		return nil
 	end
 	local acts: string[] = {}
-	for _, a in ipairs(info.activityIDs or {}) do
+	for _, a in ipairs(activityIDs(info)) do
 		acts[#acts + 1] = catalogue.ForTool(a) or ("tool:" .. a)
 	end
 	local okR, leader, tank, healer, dps = pcall(GetLFGRoles)
 	-- the category: the first activity's
 	local category
-	local first = info.activityIDs and info.activityIDs[1]
+	local first = activityIDs(info)[1]
 	local okA, a = pcall(L.GetActivityInfoTable, first)
 	if okA and type(a) == "table" then
 		category = a.categoryID
