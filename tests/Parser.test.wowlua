@@ -1,0 +1,69 @@
+-- ForeverLFG's parser on its own: what a few chat lines ask for, the
+-- phrases looked for by the line's words (the same answers as looking for
+-- every phrase), Prepare compiling ahead, a tool name added later.
+
+import test, expect from "wowlua:test"
+import parser, lang from "/Parser"
+import enUS from "/Lang/enUS"
+
+-- (the package registers it as it loads: here on its own)
+lang.Register("enUS", enUS)
+
+-- What a line asks for, as one string (nil: nothing, with why).
+local function read(text: string, languages: string[]?): string
+	local r, why = parser.Parse(text, { languages = languages or { "enUS" } })
+	if not r then
+		return "nil " .. tostring(why)
+	end
+	local roles: string[] = {}
+	for k in pairs(r.roles) do
+		roles[#roles + 1] = k
+	end
+	table.sort(roles)
+	return ("%s %s roles=%s need=%s"):format(
+		tostring(r.intent),
+		table.concat(r.activities, ","),
+		table.concat(roles, ","),
+		tostring(r.need)
+	)
+end
+
+@test("a group's line: its activity, the roles it needs, how many")
+local function groupLine()
+	parser.Prepare()
+	local english = assert(lang.modules.enUS)
+	-- the first activity the module knows, by one of its phrases
+	local key: string? = nil
+	local phrase: string? = nil
+	for k, list in pairs(english.activities or {}) do
+		if list[1] then
+			key, phrase = k, list[1]
+			break
+		end
+	end
+	assert(key and phrase, "no activity in enUS")
+	local got = read("LFM " .. phrase .. " need tank lf2m")
+	expect(got:find("^group " .. key, 1, false) ~= nil).toBe(true)
+	expect(got:find("need=2", 1, true) ~= nil).toBe(true)
+	expect(read("hello there")).toBe("nil nothing")
+	expect(read("")).toBe("nil nothing")
+end
+
+@test("a tool name added after Prepare is found too")
+local function addedName()
+	parser.Prepare()
+	parser.AddName("tool:9999", "Zzyxx Test Hollow")
+	local got = read("lfm zzyxx test hollow need heal")
+	expect(got:find("tool:9999", 1, true) ~= nil).toBe(true)
+end
+
+@test("a phrase is only found as whole words; a longer one wins over one inside it")
+local function wholeWords()
+	parser.Prepare()
+	parser.AddName("tool:9998", "Qux")
+	parser.AddName("tool:9997", "Qux Deep")
+	expect(read("lfm quxdeep need tank"):find("tool:999", 1, true)).toBeNil()
+	local got = read("lfm qux deep need tank")
+	expect(got:find("tool:9997", 1, true) ~= nil).toBe(true)
+	expect(got:find("tool:9998", 1, true)).toBeNil()
+end
