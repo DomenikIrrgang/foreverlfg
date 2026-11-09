@@ -26,6 +26,7 @@ import * as secret from "wowlua:secret"
 import config, fire, now from "./LFG"
 import type Part from "./LFG"
 import catalogue from "./Catalogue"
+import parser from "./Parser"
 import store from "./Store"
 import watches from "./Interest"
 import type Entry, Leader from "./Store"
@@ -483,6 +484,8 @@ export const part = {
 			)
 		end
 		catalogue.ReadTool()
+		-- the parser's words with the tool's names in, before the first chat line
+		parser.Prepare()
 		wasListed = listing() ~= nil
 		ticker = ticker or every(10, tick)
 	end,

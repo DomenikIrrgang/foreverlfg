@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reading chat for groups costs far less: the parser builds its word lists when the library starts (`Parser.Prepare`, which the group finder part calls after reading the tool's activity names) instead of on the first channel line, and for each line looks only for the phrases that start with one of its words, without building a new string per phrase. What a line is read as doesn't change.
+
 ## 0.1.1 (2026-11-07)
 
 ### Fixed

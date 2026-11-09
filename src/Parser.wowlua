@@ -57,6 +57,7 @@ export type ParseOptions = { languages: string[]? }
 
 export type ParserApi = {
 	Parse: (text: unknown, opts: ParseOptions?) -> (ParseResult?, string?),
+	Prepare: () -> (),
 	AddName: (key: string, name: unknown) -> (),
 	Normalize: (s: string) -> string,
 	Scripts: (s: string) -> { [string]: number },
@@ -74,9 +75,21 @@ export const lang = { modules = {} } :: LangApi
 local Lang = lang
 
 -- value: the activity key, role or class a phrase stands for (its field
--- for the intent and noise words)
-type Phrase = { text: string, value: string, field: string, ascii: boolean }
-type Compiled = { module: LangModule, activities: Phrase[], words: Phrase[] }
+-- for the intent and noise words); padded: " text " (a Latin phrase is
+-- found as a whole word)
+type Phrase = { text: string, value: string, field: string, ascii: boolean, padded: string }
+-- A list of phrases, longest first, and where to look: a Latin phrase can
+-- only be in a line that has its first word, so a line's words pick the
+-- phrases worth looking for (byWord: a first word to the phrases' places
+-- in the list); the others (Korean, Chinese: no spaces) always are.
+type Index = { byWord: { [string]: number[] }, always: number[] }
+type Compiled = {
+	module: LangModule,
+	activities: Phrase[],
+	words: Phrase[],
+	activityIndex: Index,
+	wordIndex: Index,
+}
 
 local compiled: { [string]: Compiled } = {} -- per language: aliases, sorted longest first
 local names: { key: string, text: string }[] = {} -- the tool's names (client language): { text, key }
@@ -169,9 +182,53 @@ local function phrase(list: string[]?, out: Phrase[], value: string, field: stri
 	for _, w in ipairs(list or {}) do
 		local n = normalize(w):sub(2, -2)
 		if n ~= "" then
-			out[#out + 1] = { text = n, value = value, field = field, ascii = isAscii(n) }
+			out[#out + 1] = {
+				text = n,
+				value = value,
+				field = field,
+				ascii = isAscii(n),
+				padded = " " .. n .. " ",
+			}
 		end
 	end
+end
+
+-- The phrases' index by first word (Index above).
+local function indexOf(list: Phrase[]): Index
+	local idx: Index = { byWord = {}, always = {} }
+	for i, p in ipairs(list) do
+		if p.ascii then
+			local first = p.text:match("^[^ ]+") or p.text
+			local at = idx.byWord[first]
+			if not at then
+				at = {}
+				idx.byWord[first] = at
+			end
+			at[#at + 1] = i
+		else
+			idx.always[#idx.always + 1] = i
+		end
+	end
+	return idx
+end
+
+-- The places of the phrases a line may hold, in the list's order: those
+-- whose first word is one of the line's words, and the ones always looked for.
+local function candidates(idx: Index, words: { [string]: boolean }): number[]
+	local out: number[] = {}
+	for _, i in ipairs(idx.always) do
+		out[#out + 1] = i
+	end
+	for w in pairs(words) do
+		local at = idx.byWord[w]
+		if at then
+			for _, i in ipairs(at) do
+				out[#out + 1] = i
+			end
+		end
+	end
+	table.sort(out)
+	return out
 end
 
 local function compile(code: string): Compiled?
@@ -183,7 +240,13 @@ local function compile(code: string): Compiled?
 	if not m then
 		return nil
 	end
-	local c: Compiled = { module = m, activities = {}, words = {} }
+	local c: Compiled = {
+		module = m,
+		activities = {},
+		words = {},
+		activityIndex = { byWord = {}, always = {} },
+		wordIndex = { byWord = {}, always = {} },
+	}
 	for key, list in pairs(m.activities or {}) do
 		phrase(list, c.activities, key, "activity")
 	end
@@ -207,15 +270,26 @@ local function compile(code: string): Compiled?
 	table.sort(c.words, function(a: Phrase, b: Phrase)
 		return #a.text > #b.text
 	end)
+	c.activityIndex = indexOf(c.activities)
+	c.wordIndex = indexOf(c.words)
 	compiled[code] = c
 	return c
+end
+
+-- Every language compiled now (when the tool's names are in: the client's
+-- activity names), not on the first chat line (that line took 67k
+-- instructions and 129 KB in SuuUI's measurements).
+function P.Prepare()
+	for code in pairs(Lang.modules) do
+		compile(code)
+	end
 end
 
 -- Finds a phrase: as a whole word in Latin script, anywhere in others
 -- (Korean and Chinese write without spaces). Returns its start and end.
 local function find(hay: string, p: Phrase): (number?, number?)
 	if p.ascii then
-		local s, e = hay:find(" " .. p.text .. " ", 1, true)
+		local s, e = hay:find(p.padded, 1, true)
 		if s and e then
 			return s + 1, e - 1
 		end
@@ -282,7 +356,13 @@ function P.Parse(text: unknown, opts: ParseOptions?): (ParseResult?, string?)
 	for id in text:gmatch("|Hquest:(%d+)") do
 		r.quests[#r.quests + 1] = tonumber(id) :: number
 	end
-	local hay = normalize(text)
+	local norm = normalize(text)
+	local hay = norm
+	-- the line's words: only phrases starting with one of them can be in it
+	local words: { [string]: boolean } = {}
+	for w in norm:gmatch("[^ ]+") do
+		words[w] = true
+	end
 	local seenAct: { [string]: boolean } = {}
 	local hits: Hits = { group = false, player = false }
 	for _, code in ipairs(languagesFor(text, o.languages)) do
@@ -290,7 +370,8 @@ function P.Parse(text: unknown, opts: ParseOptions?): (ParseResult?, string?)
 		if c then
 			r.languages[#r.languages + 1] = code
 			-- noise and the other words, on what activities left
-			for _, p in ipairs(c.activities) do
+			for _, i in ipairs(candidates(c.activityIndex, words)) do
+				local p = c.activities[i]
 				local s, e = find(hay, p)
 				while s and e do
 					if not seenAct[p.value] then
@@ -301,7 +382,8 @@ function P.Parse(text: unknown, opts: ParseOptions?): (ParseResult?, string?)
 					s, e = find(hay, p)
 				end
 			end
-			for _, p in ipairs(c.words) do
+			for _, i in ipairs(candidates(c.wordIndex, words)) do
+				local p = c.words[i]
 				local s, e = find(hay, p)
 				if s and e then
 					if p.field == "noise" then
@@ -322,12 +404,11 @@ function P.Parse(text: unknown, opts: ParseOptions?): (ParseResult?, string?)
 			-- a language's own patterns (counts written its way, ...)
 			local extract = c.module.Extract
 			if extract then
-				extract(hay, r, hits, normalize(text))
+				extract(hay, r, hits, norm)
 			end
 		end
 	end
 	-- numbers, the same in every language: "lf2m", "need 2", "4/5", "40+", "35-40", "lvl 28"
-	local norm = normalize(text)
 	local lfn = norm:match(" lf(%d)m ")
 	if lfn then
 		r.need = tonumber(lfn)
