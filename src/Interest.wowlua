@@ -130,6 +130,11 @@ end
 
 local quests: { [number]: boolean } = {}
 local socials: { [string]: string } = {}
+-- Read again only when asked after a change: QUEST_LOG_UPDATE comes all the
+-- time while questing, and GUILD_ROSTER_UPDATE and BN_FRIEND_INFO_CHANGED in
+-- bursts; reading the whole guild roster and friends list for each cost up
+-- to 21 ms a burst in game (SuuUI's dev profiler, 2026-11-10).
+local questsStale, socialsStale = true, true
 
 local function readQuests()
 	wipe(quests)
@@ -168,11 +173,28 @@ local function readSocial()
 	end
 end
 
+local function freshQuests(): { [number]: boolean }
+	if questsStale then
+		questsStale = false
+		readQuests()
+	end
+	return quests
+end
+
+local function freshSocials(): { [string]: string }
+	if socialsStale then
+		socialsStale = false
+		readSocial()
+	end
+	return socials
+end
+
 export function social(name: unknown): string?
 	if type(name) ~= "string" then
 		return nil
 	end
-	return socials[name] or socials[Ambiguate and Ambiguate(name, "short") or name]
+	local known = freshSocials()
+	return known[name] or known[Ambiguate and Ambiguate(name, "short") or name]
 end
 
 local function zoneKey(): string?
@@ -201,7 +223,7 @@ export function interest(): Interest
 		listed = mine and mine.activities or {},
 		listing = mine,
 		roles = roles,
-		quests = quests,
+		quests = freshQuests(),
 		level = UnitLevel("player"),
 		zone = zoneKey(),
 		watches = I.watches,
@@ -287,7 +309,8 @@ export function matchReasons(e: Entry?, given: Interest?): MatchReason[]
 		end
 	end
 	local who = e.leader and e.leader.name or e.key
-	if socials[who] or socials[Ambiguate and Ambiguate(who, "short") or who] then
+	local known = freshSocials()
+	if known[who] or known[Ambiguate and Ambiguate(who, "short") or who] then
 		reasons[#reasons + 1] = MatchReason.Friend
 	end
 	return reasons
@@ -333,7 +356,7 @@ end
 
 local function onEvent(event: string, _: unknown, a2: unknown)
 	if event == "QUEST_LOG_UPDATE" then
-		readQuests()
+		questsStale = true
 	elseif event == "PREFERRED_PLAY_SETTINGS_UPDATED" then
 		readPreferred()
 	elseif event == "CHAT_MSG_WHISPER_INFORM" then
@@ -342,15 +365,14 @@ local function onEvent(event: string, _: unknown, a2: unknown)
 			contacted[a2] = now()
 		end
 	else
-		readSocial()
+		socialsStale = true
 	end
 end
 
 -- Started and stopped with the library (init adds it with LFG.AddPart).
 export const part = {
 	Start = function()
-		readQuests()
-		readSocial()
+		questsStale, socialsStale = true, true
 		readPreferred()
 		local request = tbl.field(C_AccountServices, "RequestPreferredPlaySettings")
 		if type(request) == "function" then
