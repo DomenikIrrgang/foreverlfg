@@ -1,0 +1,63 @@
+-- ForeverLFG's interest: who of yours a line comes from (guild, friends) and
+-- the quests in your log, read when asked after a change, not on every
+-- event (GUILD_ROSTER_UPDATE, BN_FRIEND_INFO_CHANGED and QUEST_LOG_UPDATE
+-- come in bursts, and a big guild's roster read each time cost up to 21 ms
+-- a burst in game).
+
+import test, expect from "wowlua:test"
+import * as mock from "wowlua:mock"
+import * as interest from "/Interest"
+
+@test("guild members read once when asked after their roster changed, not on each event")
+local function socialLazy()
+	-- (the part listening, as the running library's)
+	local part = interest.part
+	assert(part.Stop)()
+	assert(part.Start)()
+	mock.joinGuild({ name = "Lazy Guild", rank = 1 })
+	mock.defineGuildMember({
+		name = "Guildone",
+		class = "MAGE",
+		level = 30,
+		rank = 2,
+		online = true,
+	})
+	mock.advanceTime(1)
+	mock.advanceFrames(2)
+	expect(interest.social("Guildone")).toBe("guild")
+	local reads = mock.stub(_G, "GetNumGuildMembers", GetNumGuildMembers)
+	-- a burst of roster updates and friends' changes: nothing read
+	mock.defineGuildMember({
+		name = "Guildtwo",
+		class = "PRIEST",
+		level = 40,
+		rank = 3,
+		online = true,
+	})
+	mock.advanceTime(1)
+	mock.advanceFrames(2)
+	for _ = 1, 5 do
+		mock.fireEvent("GUILD_ROSTER_UPDATE", false)
+		mock.fireEvent("BN_FRIEND_INFO_CHANGED", 1)
+	end
+	expect(reads).toHaveBeenCalledTimes(0)
+	-- asked: read once, the new member in
+	expect(interest.social("Guildtwo")).toBe("guild")
+	expect(interest.social("Guildone")).toBe("guild")
+	expect(reads).toHaveBeenCalledTimes(1)
+	expect(interest.social("Nobody")).toBeNil()
+	expect(reads).toHaveBeenCalledTimes(1)
+end
+
+@test("the quest log read when the interest is asked after QUEST_LOG_UPDATE, once a burst")
+local function questsLazy()
+	interest.interest()
+	local reads = mock.stub(C_QuestLog, "GetNumQuestLogEntries", C_QuestLog.GetNumQuestLogEntries)
+	for _ = 1, 5 do
+		mock.fireEvent("QUEST_LOG_UPDATE")
+	end
+	expect(reads).toHaveBeenCalledTimes(0)
+	interest.interest()
+	interest.interest()
+	expect(reads).toHaveBeenCalledTimes(1)
+end

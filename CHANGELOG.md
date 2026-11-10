@@ -5,6 +5,7 @@
 ### Fixed
 
 - Reading chat for groups costs far less: the parser builds its word lists when the library starts (`Parser.Prepare`, which the group finder part calls after reading the tool's activity names) instead of on the first channel line, and for each line looks only for the phrases that start with one of its words, without building a new string per phrase. What a line is read as doesn't change.
+- A big guild or many Battle.net friends no longer cost a frame each time their lists change: your guild roster, friends and quest log are read when a line or listing is next judged, once after a burst of `GUILD_ROSTER_UPDATE`, `BN_FRIEND_INFO_CHANGED` or `QUEST_LOG_UPDATE`, instead of on every one of those events.
 
 ## 0.1.1 (2026-11-07)
 
